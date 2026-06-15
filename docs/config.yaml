@@ -116,6 +116,8 @@ experimental:
   #quic-go-disable-gso: true
 
 # 类似于 /etc/hosts, 仅支持配置单个 IP
+# 注意：配置在此处的域名会被自动加入 Sniffer 的 force-override-destination 列表
+# 从而强制拦截并使用这里的 hosts 记录，无视全局 override-destination 的设置。
 hosts:
 # '*.mihomo.dev': 127.0.0.1
 # '.dev': 127.0.0.1
@@ -214,6 +216,9 @@ sniffer:
       override-destination: true
   force-domain:
     - +.v2ex.com
+  # 强制特定域名始终覆盖目标地址，无视全局的 override-destination
+  # force-override-destination:
+  #   - +.google.com
   # skip-src-address: # 对于来源ip跳过嗅探
   #   - 192.168.0.3/32
   # skip-dst-address: # 对于目标ip跳过嗅探

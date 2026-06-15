@@ -22,15 +22,16 @@ var (
 )
 
 type Dispatcher struct {
-	enable          bool
-	sniffers        map[sniffer.Sniffer]SnifferConfig
-	forceDomain     []C.DomainMatcher
-	skipSrcAddress  []C.IpMatcher
-	skipDstAddress  []C.IpMatcher
-	skipDomain      []C.DomainMatcher
-	skipList        *lru.LruCache[netip.AddrPort, uint8]
-	forceDnsMapping bool
-	parsePureIp     bool
+	enable            bool
+	sniffers          map[sniffer.Sniffer]SnifferConfig
+	forceDomain       []C.DomainMatcher
+	skipSrcAddress    []C.IpMatcher
+	skipDstAddress    []C.IpMatcher
+	skipDomain        []C.DomainMatcher
+	forceOverrideDest []C.DomainMatcher
+	skipList          *lru.LruCache[netip.AddrPort, uint8]
+	forceDnsMapping   bool
+	parsePureIp       bool
 }
 
 func (sd *Dispatcher) shouldOverride(metadata *C.Metadata) bool {
@@ -76,7 +77,12 @@ func (sd *Dispatcher) UDPSniff(packet C.PacketAdapter, packetSender C.PacketSend
 				if inWhitelist {
 					replaceDomain := func(metadata *C.Metadata, host string) {
 						if sd.domainCanReplace(host) {
-							replaceDomain(metadata, host, overrideDest)
+							od := overrideDest
+							if sd.shouldForceOverrideDest(host) {
+								log.Debugln("[Sniffer] Force override destination for [%s]", host)
+								od = true
+							}
+							replaceDomain(metadata, host, od)
 						} else {
 							log.Debugln("[Sniffer] Skip sni[%s]", host)
 						}
@@ -145,6 +151,10 @@ func (sd *Dispatcher) TCPSniff(conn *N.BufferedConn, metadata *C.Metadata) bool 
 
 		sd.skipList.Delete(dst)
 
+		if sd.shouldForceOverrideDest(host) {
+			log.Debugln("[Sniffer] Force override destination for [%s]", host)
+			overrideDest = true
+		}
 		replaceDomain(metadata, host, overrideDest)
 		return true
 	}
@@ -175,6 +185,15 @@ func (sd *Dispatcher) domainCanReplace(host string) bool {
 		}
 	}
 	return true
+}
+
+func (sd *Dispatcher) shouldForceOverrideDest(host string) bool {
+	for _, matcher := range sd.forceOverrideDest {
+		if matcher.MatchDomain(host) {
+			return true
+		}
+	}
+	return false
 }
 
 func (sd *Dispatcher) Enable() bool {
@@ -253,27 +272,29 @@ func (sd *Dispatcher) cacheSniffFailed(metadata *C.Metadata) {
 }
 
 type Config struct {
-	Enable          bool
-	Sniffers        map[sniffer.Type]SnifferConfig
-	ForceDomain     []C.DomainMatcher
-	SkipSrcAddress  []C.IpMatcher
-	SkipDstAddress  []C.IpMatcher
-	SkipDomain      []C.DomainMatcher
-	ForceDnsMapping bool
-	ParsePureIp     bool
+	Enable            bool
+	Sniffers          map[sniffer.Type]SnifferConfig
+	ForceDomain       []C.DomainMatcher
+	SkipSrcAddress    []C.IpMatcher
+	SkipDstAddress    []C.IpMatcher
+	SkipDomain        []C.DomainMatcher
+	ForceOverrideDest []C.DomainMatcher
+	ForceDnsMapping   bool
+	ParsePureIp       bool
 }
 
 func NewDispatcher(snifferConfig *Config) (*Dispatcher, error) {
 	dispatcher := Dispatcher{
-		enable:          snifferConfig.Enable,
-		forceDomain:     snifferConfig.ForceDomain,
-		skipSrcAddress:  snifferConfig.SkipSrcAddress,
-		skipDstAddress:  snifferConfig.SkipDstAddress,
-		skipDomain:      snifferConfig.SkipDomain,
-		skipList:        lru.New(lru.WithSize[netip.AddrPort, uint8](128), lru.WithAge[netip.AddrPort, uint8](600)),
-		forceDnsMapping: snifferConfig.ForceDnsMapping,
-		parsePureIp:     snifferConfig.ParsePureIp,
-		sniffers:        make(map[sniffer.Sniffer]SnifferConfig, len(snifferConfig.Sniffers)),
+		enable:            snifferConfig.Enable,
+		forceDomain:       snifferConfig.ForceDomain,
+		skipSrcAddress:    snifferConfig.SkipSrcAddress,
+		skipDstAddress:    snifferConfig.SkipDstAddress,
+		skipDomain:        snifferConfig.SkipDomain,
+		forceOverrideDest: snifferConfig.ForceOverrideDest,
+		skipList:          lru.New(lru.WithSize[netip.AddrPort, uint8](128), lru.WithAge[netip.AddrPort, uint8](600)),
+		forceDnsMapping:   snifferConfig.ForceDnsMapping,
+		parsePureIp:       snifferConfig.ParsePureIp,
+		sniffers:          make(map[sniffer.Sniffer]SnifferConfig, len(snifferConfig.Sniffers)),
 	}
 
 	for snifferName, config := range snifferConfig.Sniffers {
